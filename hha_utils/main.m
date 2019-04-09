@@ -1,9 +1,9 @@
 clc;
 addpath('./utils/nyu-hooks');
 % matrix_filename = 'camera_rotations_NYU.txt';
-depth_image_root = '../nyu/data/depth'       % dir where depth images are in.
-rawdepth_image_root = '../nyu/data/rawdepth'       % dir where raw depth images are in.
-hha_image_root = '../nyu/data/hha'
+depth_image_root = '../datasets/data/depth'       % dir where depth images are in.
+rawdepth_image_root = '../datasets/data/rawdepth'       % dir where raw depth images are in.
+hha_image_root = '../datasets/data/hha'
 
 C = getCameraParam('color');
 
