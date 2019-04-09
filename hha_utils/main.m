@@ -7,7 +7,7 @@ hha_image_root = '../datasets/data/hha'
 
 C = getCameraParam('color');
 
-for i=1:300
+for i=1:1449
     i
     matrix = C;    %camera_matrix(1+(i-1)*3:i*3,:);        % matrix of this image, 3*3
     D = imread(fullfile(depth_image_root, '/', ['img_', mat2str(5000+i),'.png']));
