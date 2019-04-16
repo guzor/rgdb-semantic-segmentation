@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 import h5py
 
-N_IMAGES = 5
+N_IMAGES = 10
 
 
 class Dataset(Dataset):
@@ -24,11 +24,15 @@ class Dataset(Dataset):
         # as it turns out, trying to pickle this is a shit idea :D
         rgb_images_fr = np.transpose(f['images'][0:N_IMAGES], [0, 2, 3, 1]).astype(np.float32)
         label_images_fr = np.array(f['labels'][0:N_IMAGES])
-
+        self.label_names = np.array(['<UKN>'] + self.get_names(f))
         f.close()
 
         self.rgb_images = rgb_images_fr
         self.label_images = label_images_fr
+
+    def get_names(self, h5py_data, field='names'):
+        extract_name = lambda index: ''.join([chr(v) for v in h5py_data[h5py_data[field][0][index]]])
+        return [extract_name(i) for i in range(len(h5py_data[field][0]))]
 
     def __len__(self):
         return len(self.rgb_images)

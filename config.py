@@ -16,8 +16,6 @@ mlp_num_layers = 1
 use_bootstrap_loss = False
 bootstrap_rate = 0.25
 use_gpu = False  # CHANGED TRUE
-class_weights = [0.0] + [1.0 for i in range(13)]
-nclasses = len(class_weights)
 
 '''Optimizer parameter'''
 base_initial_lr = 5e-4

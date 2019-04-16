@@ -50,15 +50,12 @@ def main(args):
     logger.info("Loading data...")
     print("Loading data...")
 
-    label_to_idx = {'<UNK>': 0, 'beam': 1, 'board': 2, 'bookcase': 3, 'ceiling': 4, 'chair': 5, 'clutter': 6,
-                    'column': 7,
-                    'door': 8, 'floor': 9, 'sofa': 10, 'table': 11, 'wall': 12, 'window': 13}
-
-    idx_to_label = {0: '<UNK>', 1: 'beam', 2: 'board', 3: 'bookcase', 4: 'ceiling', 5: 'chair', 6: 'clutter',
+    '''idx_to_label = {0: '<UNK>', 1: 'beam', 2: 'board', 3: 'bookcase', 4: 'ceiling', 5: 'chair', 6: 'clutter',
                     7: 'column',
-                    8: 'door', 9: 'floor', 10: 'sofa', 11: 'table', 12: 'wall', 13: 'window'}
+                    8: 'door', 9: 'floor', 10: 'sofa', 11: 'table', 12: 'wall', 13: 'window'}*'''
 
     dataset_tr = nyudv2.Dataset(flip_prob=config.flip_prob, crop_type='Random', crop_size=config.crop_size)
+    idx_to_label = dataset_tr.label_names
     dataloader_tr = DataLoader(dataset_tr, batch_size=args.batchsize, shuffle=True,
                                num_workers=config.workers_tr, drop_last=False, pin_memory=True)
 
@@ -69,8 +66,12 @@ def main(args):
 
     logger.info("Preparing model...")
     print("Preparing model...")
-    model = Model(config.nclasses, config.mlp_num_layers, config.use_gpu)
-    loss = nn.NLLLoss(reduce=not config.use_bootstrap_loss, weight=torch.FloatTensor(config.class_weights))
+
+    class_weights = [0.0] + [1.0 for i in range(1, len(idx_to_label))]
+    nclasses = len(class_weights)
+
+    model = Model(nclasses, config.mlp_num_layers, config.use_gpu)
+    loss = nn.NLLLoss(reduce=not config.use_bootstrap_loss, weight=torch.FloatTensor(class_weights))
     softmax = nn.Softmax(dim=1)
     log_softmax = nn.LogSoftmax(dim=1)
 
