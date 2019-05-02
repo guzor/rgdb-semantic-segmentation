@@ -50,12 +50,12 @@ def main(args):
     logger.info("Loading data...")
     print("Loading data...")
 
-    idx_to_label = {0: '<UNK>', 1: 'beam', 2: 'board', 3: 'bookcase', 4: 'ceiling', 5: 'chair', 6: 'clutter',
+    '''idx_to_label = {0: '<UNK>', 1: 'beam', 2: 'board', 3: 'bookcase', 4: 'ceiling', 5: 'chair', 6: 'clutter',
                     7: 'column',
-                    8: 'door', 9: 'floor', 10: 'sofa', 11: 'table', 12: 'wall', 13: 'window'}
+                    8: 'door', 9: 'floor', 10: 'sofa', 11: 'table', 12: 'wall', 13: 'window'}*'''
 
     dataset_tr = nyudv2.Dataset(flip_prob=config.flip_prob, crop_type='Random', crop_size=config.crop_size)
-    idx_to_label=dataset_tr.label_images
+    idx_to_label = dataset_tr.label_names
     dataloader_tr = DataLoader(dataset_tr, batch_size=args.batchsize, shuffle=True,
                                num_workers=config.workers_tr, drop_last=False, pin_memory=True)
 
@@ -66,8 +66,12 @@ def main(args):
 
     logger.info("Preparing model...")
     print("Preparing model...")
-    model = Model(config.nclasses, config.mlp_num_layers, config.use_gpu)
-    loss = nn.NLLLoss(reduce=not config.use_bootstrap_loss, weight=torch.FloatTensor(config.class_weights))
+
+    class_weights = [0.0] + [1.0 for i in range(1, len(idx_to_label))]
+    nclasses = len(class_weights)
+
+    model = Model(nclasses, config.mlp_num_layers, config.use_gpu)
+    loss = nn.NLLLoss(reduce=not config.use_bootstrap_loss, weight=torch.FloatTensor(class_weights))
     softmax = nn.Softmax(dim=1)
     log_softmax = nn.LogSoftmax(dim=1)
 
@@ -141,23 +145,23 @@ def main(args):
                 loss_sum += loss_
 
                 pred = output.permute(0, 2, 3, 1).contiguous()
-                pred = pred.view(-1, config.nclasses)
+                pred = pred.view(-1, nclasses)
                 pred = softmax(pred)
                 pred_max_val, pred_arg_max = pred.max(1)
 
-                pairs = target.view(-1) * 14 + pred_arg_max.view(-1)
-                for i in range(14 ** 2):
+                pairs = target.view(-1) * len(idx_to_label) + pred_arg_max.view(-1)
+                for i in range(len(idx_to_label) ** 2):
                     cumu = pairs.eq(i).float().sum()
                     confusion_matrix[i] += cumu.item()
 
             sys.stdout.write(" - Eval time: {:.2f}s \n".format(time.time() - start_time))
             loss_sum /= len(dataloader)
 
-            confusion_matrix = confusion_matrix.cpu().numpy().reshape((14, 14))
-            class_iou = np.zeros(14)
-            confusion_matrix[0, :] = np.zeros(14)
-            confusion_matrix[:, 0] = np.zeros(14)
-            for i in range(1, 14):
+            confusion_matrix = confusion_matrix.cpu().numpy().reshape((len(idx_to_label), len(idx_to_label)))
+            class_iou = np.zeros(len(idx_to_label))
+            confusion_matrix[0, :] = np.zeros(len(idx_to_label))
+            confusion_matrix[:, 0] = np.zeros(len(idx_to_label))
+            for i in range(1, len(idx_to_label)):
                 class_iou[i] = confusion_matrix[i, i] / (
                         np.sum(confusion_matrix[i, :]) + np.sum(confusion_matrix[:, i]) - confusion_matrix[i, i])
 
@@ -175,29 +179,10 @@ def main(args):
     if model_to_load:
         logger.info("Loading old model...")
         print("Loading old model...")
-        model.load_state_dict(torch.load(model_to_load, map_location={'cuda:0': 'cpu'}))
-
-        for rgbd_label_xy in dataloader_tr:
-            example = rgbd_label_xy[0]
-
-            print(example.size())
-            example = example.permute(0, 3, 1, 2).contiguous()
-            print(example.size())
-            xy = rgbd_label_xy[2]
-            xy = xy.float()
-            xy = xy.permute(0, 3, 1, 2).contiguous()
-            output = model(example, gnn_iterations=config.gnn_iterations, k=config.gnn_k, xy=xy,
-                           use_gnn=config.use_gnn)
-            pred = output.permute(0, 2, 3, 1).contiguous()
-            pred = pred.view(-1, config.nclasses)
-            pred = softmax(pred)
-            _, pred_arg_max = pred.max(1)
-            result = np.reshape(pred_arg_max, [4, 640, 480])
-            from matplotlib import pyplot as plt
-            plt.imshow(result[0])
-            plt.show()
-        exit(0)
+        model.load_state_dict(torch.load(model_to_load))
     else:
+        # print("here")
+        # exit(0)
         logger.info("Starting training from scratch...")
         print("Starting training from scratch...")
 
@@ -269,7 +254,7 @@ def main(args):
         print('Epoch{} Eval loss: {}'.format(epoch, eval_loss))
         logger.info("E%dB%d Class IoU:", epoch, batch_idx)
         print('Epoch{} Class IoU:'.format(epoch))
-        for cl in range(14):
+        for cl in range(len(idx_to_label)):
             logger.info("%+10s: %-10s" % (idx_to_label[cl], class_iou[cl]))
             print('{}:{}'.format(idx_to_label[cl], class_iou[cl]))
         logger.info("Mean IoU: %s", np.mean(class_iou[1:]))
@@ -284,7 +269,7 @@ def main(args):
     eval_loss, class_iou, confusion_matrix = eval_set(dataloader_va)
     logger.info("Eval loss: %s", eval_loss)
     logger.info("Class IoU:")
-    for cl in range(14):
+    for cl in range(len(idx_to_label)):
         logger.info("%+10s: %-10s" % (idx_to_label[cl], class_iou[cl]))
     logger.info("Mean IoU: %s", np.mean(class_iou[1:]))
 

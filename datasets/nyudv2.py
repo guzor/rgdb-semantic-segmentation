@@ -1,5 +1,5 @@
 from torch.utils.data import Dataset
-import glob
+# import glob
 import numpy as np
 import cv2
 import h5py
@@ -19,16 +19,29 @@ class Dataset(Dataset):
 
         # read mat file
         print("Reading .mat file...")
+
+        # as mat
+        # import scipy.io
+        # f = scipy.io.loadmat(data_path + data_file)
+        # rgb_images_fr = np.transpose(f['images'][:, :, :, 0:N_IMAGES], [3, 1, 0, 2]).astype(np.float32)
+        # label_images_fr = np.array(f['labels'][:, :, 0:N_IMAGES])
+        # self.label_names = np.array(['<UNK>'] + [x[0][0] for x in f['names']])
+        # print(self.label_names)
+
+        # as h5
         f = h5py.File(data_path + data_file)
 
-        # as it turns out, trying to pickle this is a shit idea :D
         rgb_images_fr = np.transpose(f['images'][0:N_IMAGES], [0, 2, 3, 1]).astype(np.float32)
         label_images_fr = np.array(f['labels'][0:N_IMAGES])
-        label_names = np.array(f['names'])
+        self.label_names = np.array(['<UNK>'] + self.get_names(f))
         f.close()
 
         self.rgb_images = rgb_images_fr
         self.label_images = label_images_fr
+
+    def get_names(self, h5py_data, field='names'):
+        extract_name = lambda index: ''.join([chr(v) for v in h5py_data[h5py_data[field][0][index]]])
+        return [extract_name(i) for i in range(len(h5py_data[field][0]))]
 
     def __len__(self):
         return len(self.rgb_images)
@@ -36,12 +49,11 @@ class Dataset(Dataset):
     def __getitem__(self, idx):
         rgb = self.rgb_images[idx].astype(np.float32)
         index = 5000 + idx + 1
-        temp = cv2.imread("datasets/data/hha/img_" + str(index) + ".png", cv2.COLOR_BGR2RGB)
         hha = np.transpose(cv2.imread("datasets/data/hha/img_" + str(index) + ".png", cv2.COLOR_BGR2RGB), [1, 0, 2])
         # TODO sizes aren't the same- cropped to (46:470, 41:600, :) in Depth2HHA/utils/nyu-hooks/cropIt.m
         rgb_hha = np.concatenate([rgb, hha], axis=2).astype(np.float32)
         label = self.label_images[idx].astype(np.float32)
-        label[label >= 14] = 0
+        label[label >= len(self.label_names)] = 0
         xy = np.zeros_like(rgb)[:, :, 0:2].astype(np.float32)
 
         # random crop
