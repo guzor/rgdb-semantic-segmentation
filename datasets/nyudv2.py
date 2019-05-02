@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 import h5py
 
-N_IMAGES = 5
+N_IMAGES = 10
 
 
 class Dataset(Dataset):
@@ -24,7 +24,7 @@ class Dataset(Dataset):
         # as it turns out, trying to pickle this is a shit idea :D
         rgb_images_fr = np.transpose(f['images'][0:N_IMAGES], [0, 2, 3, 1]).astype(np.float32)
         label_images_fr = np.array(f['labels'][0:N_IMAGES])
-
+        label_names = np.array(f['names'])
         f.close()
 
         self.rgb_images = rgb_images_fr

@@ -50,15 +50,12 @@ def main(args):
     logger.info("Loading data...")
     print("Loading data...")
 
-    label_to_idx = {'<UNK>': 0, 'beam': 1, 'board': 2, 'bookcase': 3, 'ceiling': 4, 'chair': 5, 'clutter': 6,
-                    'column': 7,
-                    'door': 8, 'floor': 9, 'sofa': 10, 'table': 11, 'wall': 12, 'window': 13}
-
     idx_to_label = {0: '<UNK>', 1: 'beam', 2: 'board', 3: 'bookcase', 4: 'ceiling', 5: 'chair', 6: 'clutter',
                     7: 'column',
                     8: 'door', 9: 'floor', 10: 'sofa', 11: 'table', 12: 'wall', 13: 'window'}
 
     dataset_tr = nyudv2.Dataset(flip_prob=config.flip_prob, crop_type='Random', crop_size=config.crop_size)
+    idx_to_label=dataset_tr.label_images
     dataloader_tr = DataLoader(dataset_tr, batch_size=args.batchsize, shuffle=True,
                                num_workers=config.workers_tr, drop_last=False, pin_memory=True)
 
@@ -178,10 +175,29 @@ def main(args):
     if model_to_load:
         logger.info("Loading old model...")
         print("Loading old model...")
-        model.load_state_dict(torch.load(model_to_load))
+        model.load_state_dict(torch.load(model_to_load, map_location={'cuda:0': 'cpu'}))
+
+        for rgbd_label_xy in dataloader_tr:
+            example = rgbd_label_xy[0]
+
+            print(example.size())
+            example = example.permute(0, 3, 1, 2).contiguous()
+            print(example.size())
+            xy = rgbd_label_xy[2]
+            xy = xy.float()
+            xy = xy.permute(0, 3, 1, 2).contiguous()
+            output = model(example, gnn_iterations=config.gnn_iterations, k=config.gnn_k, xy=xy,
+                           use_gnn=config.use_gnn)
+            pred = output.permute(0, 2, 3, 1).contiguous()
+            pred = pred.view(-1, config.nclasses)
+            pred = softmax(pred)
+            _, pred_arg_max = pred.max(1)
+            result = np.reshape(pred_arg_max, [4, 640, 480])
+            from matplotlib import pyplot as plt
+            plt.imshow(result[0])
+            plt.show()
+        exit(0)
     else:
-        # print("here")
-        # exit(0)
         logger.info("Starting training from scratch...")
         print("Starting training from scratch...")
 
@@ -192,7 +208,6 @@ def main(args):
         if config.lr_schedule_type == 'exp':
             scheduler.step(epoch)
         for batch_idx, rgbd_label_xy in tqdm(enumerate(dataloader_tr), total=len(dataloader_tr), smoothing=0.9):
-            print("here")
             x = rgbd_label_xy[0]
             target = rgbd_label_xy[1].long()
             xy = rgbd_label_xy[2]
