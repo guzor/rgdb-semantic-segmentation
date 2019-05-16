@@ -112,9 +112,9 @@ def main(args):
         with torch.no_grad():
             loss_sum = 0.0
             if config.use_gpu:
-                confusion_matrix = torch.cuda.FloatTensor(np.zeros( len(idx_to_label) ** 2))
+                confusion_matrix = torch.cuda.FloatTensor(np.zeros(len(idx_to_label) ** 2))
             else:
-                confusion_matrix = torch.FloatTensor(np.zeros( len(idx_to_label) ** 2))
+                confusion_matrix = torch.FloatTensor(np.zeros(len(idx_to_label) ** 2))
 
             start_time = time.time()
 
@@ -162,8 +162,11 @@ def main(args):
             confusion_matrix[0, :] = np.zeros(len(idx_to_label))
             confusion_matrix[:, 0] = np.zeros(len(idx_to_label))
             for i in range(1, len(idx_to_label)):
-                class_iou[i] = confusion_matrix[i, i] / (
-                        np.sum(confusion_matrix[i, :]) + np.sum(confusion_matrix[:, i]) - confusion_matrix[i, i])
+                tot = np.sum(confusion_matrix[i, :]) + np.sum(confusion_matrix[:, i]) - confusion_matrix[i, i]
+                if tot == 0:
+                    class_iou[i] = 0
+                else:
+                    class_iou[i] = confusion_matrix[i, i] / tot
 
         return loss_sum.item(), class_iou, confusion_matrix
 
