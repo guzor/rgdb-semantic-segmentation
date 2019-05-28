@@ -10,7 +10,9 @@ import torch.optim
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from datasets import nyudv2
+from datasets import nyud2headed
 from models import Model
+from model2headed import Model2Headed
 import config
 from tqdm import tqdm
 import argparse
@@ -30,6 +32,8 @@ def parse_args():
                         help='Direction for pretrained weight')
     parser.add_argument('--gpu', type=str, default='0',
                         help='specify gpu device')
+    parser.add_argument('--is_2_headed', type=bool, default=False,
+                        help='which model to use')
 
     return parser.parse_args()
 
@@ -54,12 +58,21 @@ def main(args):
                     7: 'column',
                     8: 'door', 9: 'floor', 10: 'sofa', 11: 'table', 12: 'wall', 13: 'window'}*'''
 
-    dataset_tr = nyudv2.Dataset(flip_prob=config.flip_prob, crop_type='Random', crop_size=config.crop_size)
+    if args.is_2_headed:
+        dataset_tr = nyud2headed.Dataset(flip_prob=config.flip_prob, crop_type='Random', crop_size=config.crop_size)
+    else:
+        dataset_tr = nyudv2.Dataset(flip_prob=config.flip_prob, crop_type='Random', crop_size=config.crop_size)
     idx_to_label = dataset_tr.label_names
+    if args.is_2_headed:
+        idx_to_label2 = dataset_tr.label2_names
+
     dataloader_tr = DataLoader(dataset_tr, batch_size=args.batchsize, shuffle=True,
                                num_workers=config.workers_tr, drop_last=False, pin_memory=True)
 
-    dataset_va = nyudv2.Dataset(flip_prob=0.0, crop_type='Center', crop_size=config.crop_size)
+    if args.is_2_headed:
+        dataset_va = nyud2headed.Dataset(flip_prob=0.0, crop_type='Center', crop_size=config.crop_size)
+    else:
+        dataset_va = nyudv2.Dataset(flip_prob=0.0, crop_type='Center', crop_size=config.crop_size)
     dataloader_va = DataLoader(dataset_va, batch_size=args.batchsize, shuffle=False,
                                num_workers=config.workers_va, drop_last=False, pin_memory=True)
     cv2.setNumThreads(config.workers_tr)
@@ -69,15 +82,24 @@ def main(args):
 
     class_weights = [0.0] + [1.0 for i in range(1, len(idx_to_label))]
     nclasses = len(class_weights)
-
-    model = Model(nclasses, config.mlp_num_layers, config.use_gpu)
+    if args.is_2_headed:
+        nclasses1 = nclasses
+        class2_weights = [0.0] + [1.0 for i in range(1, len(idx_to_label2))]
+        nclasses2 = len(class2_weights)
+        model = Model2Headed(nclasses1, nclasses2, config.mlp_num_layers, config.use_gpu)
+        loss2 = nn.NLLLoss(reduce=not config.use_bootstrap_loss, weight=torch.FloatTensor(class2_weights))
+    else:
+        model = Model(nclasses, config.mlp_num_layers, config.use_gpu)
     loss = nn.NLLLoss(reduce=not config.use_bootstrap_loss, weight=torch.FloatTensor(class_weights))
+
     softmax = nn.Softmax(dim=1)
     log_softmax = nn.LogSoftmax(dim=1)
 
     if config.use_gpu:
         model = model.cuda()
         loss = loss.cuda()
+        if args.is_2_headed:
+            loss2 = loss2.cuda()
         softmax = softmax.cuda()
         log_softmax = log_softmax.cuda()
 
@@ -134,6 +156,9 @@ def main(args):
 
                 output = model(input, gnn_iterations=config.gnn_iterations, k=config.gnn_k, xy=xy,
                                use_gnn=config.use_gnn)
+                # if args.is_2_headed:
+                #     output1, output2 = model(input, gnn_iterations=config.gnn_iterations, k=config.gnn_k, xy=xy,
+                #                              use_gnn=config.use_gnn)
 
                 if config.use_bootstrap_loss:
                     loss_per_pixel = loss.forward(log_softmax(output.float()), target)
@@ -198,6 +223,8 @@ def main(args):
         for batch_idx, rgbd_label_xy in tqdm(enumerate(dataloader_tr), total=len(dataloader_tr), smoothing=0.9):
             x = rgbd_label_xy[0]
             target = rgbd_label_xy[1].long()
+            if args.is_2_headed:
+                target2 = rgbd_label_xy[3].long()
             xy = rgbd_label_xy[2]
             x = x.float()
             xy = xy.float()
@@ -209,13 +236,20 @@ def main(args):
                 input = input.cuda()
                 xy = xy.cuda()
                 target = target.cuda()
+                if args.is_2_headed:
+                    target2 = target2.cuda()
 
             xy = xy.permute(0, 3, 1, 2).contiguous()
 
             optimizer.zero_grad()
             model.train()
 
-            output = model(input, gnn_iterations=config.gnn_iterations, k=config.gnn_k, xy=xy, use_gnn=config.use_gnn)
+            if args.is_2_headed:
+                output1, output2 = model(input, gnn_iterations=config.gnn_iterations, k=config.gnn_k, xy=xy,
+                                         use_gnn=config.use_gnn)
+            else:
+                output = model(input, gnn_iterations=config.gnn_iterations, k=config.gnn_k, xy=xy,
+                               use_gnn=config.use_gnn)
 
             if config.use_bootstrap_loss:
                 loss_per_pixel = loss.forward(log_softmax(output.float()), target)
@@ -223,7 +257,11 @@ def main(args):
                                            int((config.crop_size ** 2) * config.bootstrap_rate))
                 loss_ = torch.mean(topk)
             else:
-                loss_ = loss.forward(log_softmax(output.float()), target)
+                if args.is_2_headed:
+                    loss_ = loss.forward(log_softmax(output1.float()), target) + loss2.forward(
+                        log_softmax(output2.float()), target2)
+                else:
+                    loss_ = loss.forward(log_softmax(output.float()), target)
 
             loss_.backward()
             optimizer.step()
@@ -243,38 +281,38 @@ def main(args):
         torch.save(model.state_dict(), log_path + '/save/' + 'checkpoint_' + str(epoch) + '.pth')
 
         '''Evaluation'''
-        eval_loss, class_iou, confusion_matrix = eval_set(dataloader_va)
-        eval_losses.append(eval_loss)
-
-        if config.lr_schedule_type == 'plateau':
-            scheduler.step(eval_loss)
+        # eval_loss, class_iou, confusion_matrix = eval_set(dataloader_va)
+        # eval_losses.append(eval_loss)
+        #
+        # if config.lr_schedule_type == 'plateau':
+        #     scheduler.step(eval_loss)
         print('Learning ...')
         logger.info("E%dB%d Def learning rate: %s", epoch, batch_idx, get_current_learning_rates()[0])
         print('Epoch{} Def learning rate: {}'.format(epoch, get_current_learning_rates()[0]))
         logger.info("E%dB%d GNN learning rate: %s", epoch, batch_idx, get_current_learning_rates()[1])
         print('Epoch{} GNN learning rate: {}'.format(epoch, get_current_learning_rates()[1]))
-        logger.info("E%dB%d Eval loss: %s", epoch, batch_idx, eval_loss)
-        print('Epoch{} Eval loss: {}'.format(epoch, eval_loss))
-        logger.info("E%dB%d Class IoU:", epoch, batch_idx)
-        print('Epoch{} Class IoU:'.format(epoch))
-        for cl in range(len(idx_to_label)):
-            logger.info("%+10s: %-10s" % (idx_to_label[cl], class_iou[cl]))
-            print('{}:{}'.format(idx_to_label[cl], class_iou[cl]))
-        logger.info("Mean IoU: %s", np.mean(class_iou[1:]))
-        print("Mean IoU: %.2f" % np.mean(class_iou[1:]))
-        logger.info("E%dB%d Confusion matrix:", epoch, batch_idx)
-        logger.info(confusion_matrix)
+        # logger.info("E%dB%d Eval loss: %s", epoch, batch_idx, eval_loss)
+        # print('Epoch{} Eval loss: {}'.format(epoch, eval_loss))
+        # logger.info("E%dB%d Class IoU:", epoch, batch_idx)
+        # print('Epoch{} Class IoU:'.format(epoch))
+        # for cl in range(len(idx_to_label)):
+        #     logger.info("%+10s: %-10s" % (idx_to_label[cl], class_iou[cl]))
+        #     print('{}:{}'.format(idx_to_label[cl], class_iou[cl]))
+        # logger.info("Mean IoU: %s", np.mean(class_iou[1:]))
+        # print("Mean IoU: %.2f" % np.mean(class_iou[1:]))
+        # logger.info("E%dB%d Confusion matrix:", epoch, batch_idx)
+        # logger.info(confusion_matrix)
 
     logger.info("Finished training!")
     logger.info("Saving model...")
     print('Saving final model...')
     torch.save(model.state_dict(), log_path + '/save/3dgnn_finish.pth')
-    eval_loss, class_iou, confusion_matrix = eval_set(dataloader_va)
-    logger.info("Eval loss: %s", eval_loss)
-    logger.info("Class IoU:")
-    for cl in range(len(idx_to_label)):
-        logger.info("%+10s: %-10s" % (idx_to_label[cl], class_iou[cl]))
-    logger.info("Mean IoU: %s", np.mean(class_iou[1:]))
+    # eval_loss, class_iou, confusion_matrix = eval_set(dataloader_va)
+    # logger.info("Eval loss: %s", eval_loss)
+    # logger.info("Class IoU:")
+    # for cl in range(len(idx_to_label)):
+    #     logger.info("%+10s: %-10s" % (idx_to_label[cl], class_iou[cl]))
+    # logger.info("Mean IoU: %s", np.mean(class_iou[1:]))
 
 
 if __name__ == '__main__':
